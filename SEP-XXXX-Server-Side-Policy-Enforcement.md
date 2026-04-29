@@ -595,3 +595,7 @@ Alternative:
 
 This extension defines a minimal, backend-neutral contract for MCP Servers to enforce policy at capability discovery and execution time, while preserving the server as the final Policy Enforcement Point.
 
+## AI usage disclosure
+
+Generative AI was used as an editorial and technical sparring partner while developing this draft. It helped review structure, identify possible gaps and refine wording. The core idea, proposal direction and final editorial judgment are mine.
+
