@@ -1,6 +1,6 @@
 # MCP Server-Side Policy Enforcement Extension Proposal
 
-This is my proposal for a new MCP extension: **Server-Side Policy Enforcement**.
+This is my proposal for a new Model Context Protocol (MCP) extension: **Server-Side Policy Enforcement**.
 
 It introduces a lightweight Policy Enforcement Point inside the MCP Server so that governance, including authorization, actor validation, approval workflows and discovery filtering, happens at the execution point instead of relying only on the client or gateways.
 
