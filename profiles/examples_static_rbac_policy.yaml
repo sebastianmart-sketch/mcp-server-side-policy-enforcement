@@ -1,0 +1,59 @@
+# Non-normative example only.
+# This file illustrates one possible local RBAC policy profile.
+# The core SEP does not require YAML, RBAC or this schema.
+
+version: 1
+
+roles:
+  sre:
+    description: Site reliability engineers with controlled operational access.
+    grants:
+      - capability: tool:read_logs
+        actions: [execute]
+        decision: allow
+
+      - capability: tool:restart_service
+        actions: [execute]
+        decision: require_approval
+        constraints:
+          actor_required: human
+          approval_required: true
+          approval_via: task
+
+      - capability: resource:prod_config
+        actions: [read]
+        decision: allow
+        constraints:
+          environment: production
+
+  developer:
+    description: Developers with non-production access.
+    grants:
+      - capability: tool:read_logs
+        actions: [execute]
+        decision: allow
+        constraints:
+          environment: [development, staging]
+
+      - capability: resource:prod_config
+        actions: [read]
+        decision: deny
+
+  automation:
+    description: Automation service account with narrow permissions.
+    grants:
+      - capability: tool:collect_metrics
+        actions: [execute]
+        decision: allow
+        constraints:
+          actor_required: service_account
+
+      - capability: tool:restart_service
+        actions: [execute]
+        decision: deny
+
+defaults:
+  missing_policy: deny
+  policy_error: deny
+  unknown_capability: deny
+  client_claims_authoritative: false

@@ -1,0 +1,35 @@
+{
+  "request": {
+    "subject": {
+      "principal": "user:alice@example.com",
+      "actor_type": "human",
+      "groups": ["sre"],
+      "tenant": "example-corp"
+    },
+    "capability": {
+      "type": "tool",
+      "name": "restart_service"
+    },
+    "action": "execute",
+    "arguments": {
+      "service": "database"
+    },
+    "environment": {
+      "deployment": "production",
+      "risk": "high"
+    },
+    "approval": {
+      "present": false
+    }
+  },
+  "response": {
+    "decision": "require_approval",
+    "constraints": {
+      "actor_required": "human",
+      "approval_required": true,
+      "approval_via": "task"
+    },
+    "reason_code": "PRODUCTION_CHANGE_REQUIRES_APPROVAL",
+    "safe_message": "This operation requires approval before execution."
+  }
+}

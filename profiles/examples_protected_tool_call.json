@@ -1,0 +1,9 @@
+{
+  "method": "tools/call",
+  "params": {
+    "name": "restart_service",
+    "arguments": {
+      "service": "database"
+    }
+  }
+}

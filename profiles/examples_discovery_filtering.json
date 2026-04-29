@@ -1,0 +1,29 @@
+{
+  "method": "tools/list",
+  "server_policy_context": {
+    "subject": {
+      "principal": "user:bob@example.com",
+      "actor_type": "human",
+      "groups": ["developer"]
+    },
+    "environment": {
+      "deployment": "production"
+    }
+  },
+  "unfiltered_tools": [
+    "read_logs",
+    "collect_metrics",
+    "restart_service",
+    "rotate_database_credentials",
+    "delete_cluster"
+  ],
+  "filtered_tools": [
+    "read_logs",
+    "collect_metrics"
+  ],
+  "notes": [
+    "Discovery filtering is optional but recommended.",
+    "Hidden tools must still be protected at execution time.",
+    "The server must not rely on discovery filtering as the only enforcement control."
+  ]
+}
