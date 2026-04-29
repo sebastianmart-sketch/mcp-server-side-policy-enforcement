@@ -1,1033 +1,453 @@
-# SEP-XXXX: Server-Side Policy Enforcement Extension for MCP Servers
+# SEP-XXXX: Server-side policy enforcement for MCP capabilities
 
-**Title:** Server-Side Policy Enforcement for MCP Servers  
-**Status:** Draft  
-**Author:** Sebastian Martinez, individual contributor  
-**Created:** 2026-04-28  
-**Version:** 1.0-draft  
-**Extension identifier:** `io.modelcontextprotocol.policy` or equivalent name to be assigned during review
+## Status
 
-## Abstract
+Draft proposal for early community review.
 
-This SEP proposes an optional server-side policy enforcement extension for Model Context Protocol servers.
+## Summary
 
-The extension defines a Policy Enforcement Point inside the MCP Server. The Policy Enforcement Point evaluates server-controlled policy before the server exposes or executes tools, resources, prompts, tasks, or future MCP capabilities.
+This proposal defines a minimal, backend-neutral extension for server-side policy enforcement in MCP.
 
-The core idea is simple: **the MCP Server must not trust the MCP Client by default as the authority for authorization, actor validation, approval state, or capability visibility.** Policy must be enforced where the protected capability is exposed or dispatched.
+The extension allows an MCP Server to advertise that it evaluates policy before exposing or executing protected MCP capabilities, including tools, resources, prompts and future capability types. The protected MCP Server remains the Policy Enforcement Point (PEP), while policy evaluation may be local or delegated to an external trusted policy service.
 
-This extension standardizes the enforcement contract, not the policy language. Implementations may use YAML, JSON, Rego, Cedar, OPA, LDAP, PAM, OAuth claims, a database, a REST service, compiled rules, an in-memory structure, or any other backend.
-
-Optional implementation profiles are described in appendices, including a non-normative YAML reference profile, optional static RBAC, optional structured audit, and delegated governance modules. These profiles are not required for minimal conformance unless explicitly advertised by the server.
+The proposal does not define a policy language, RBAC model, ABAC model, audit backend, identity provider or authorization protocol. It defines the enforcement contract that an MCP Server can implement regardless of the underlying policy system.
 
 ## Motivation
 
-MCP Servers may expose capabilities that read sensitive context, execute privileged operations, trigger infrastructure workflows, or influence downstream systems. In enterprise environments, these actions must be governed at the point where they are exposed or executed.
+MCP enables clients and agents to discover and invoke capabilities across many systems. As MCP is adopted for operational, administrative and enterprise workflows, access control cannot rely only on the MCP Client, a gateway or user confirmation UI.
 
-Client-side controls and gateway-level enforcement are useful, but they are not sufficient as the only governance layer. A gateway can be bypassed, misconfigured, replaced, or absent in local, embedded, air-gapped, administrative, internal-service, or same-machine deployments. A client may be compromised, overly permissive, incorrectly implemented, or operating with stale discovery data.
+The server that owns a protected capability is the last responsible authority before that capability is exposed or executed.
 
-Therefore, a server that exposes sensitive capabilities should enforce policy locally before discovery and execution. This supports defense in depth and aligns with Zero Trust principles.
+This proposal addresses the gap between authentication and capability-level authorization.
 
-This model is especially relevant for AI-assisted operations, agentic workflows, infrastructure management, regulated environments, and multi-tenant enterprise deployments where different actors may interact with the same MCP Server, including humans, AI agents, supervised AI workflows, automation systems, administrative tools, and internal services.
+MCP authorization can answer:
 
-## Scope
+> Can this client obtain and present credentials to access this MCP Server?
 
-### Core extension
+Server-side policy enforcement answers:
 
-The core extension defines:
+> Given this authenticated context, should this specific capability be listed, read or executed now, with these parameters, for this actor, tenant, environment and approval state?
 
-1. A server-side policy capability declaration.
-2. A Zero Trust client posture.
-3. Policy evaluation points for discovery and execution methods.
-4. A minimal decision model.
-5. Actor-based governance semantics.
-6. Approval handling semantics.
-7. An external validation contract.
-8. Fail-closed behavior for invalid, unknown, or unverifiable cases.
+## Core principle
 
-### Optional profiles and guidance
+An MCP Server that supports this extension MUST NOT trust the MCP Client by default as the authority for:
 
-The appendices describe optional, non-normative profiles and implementation patterns:
+- authorization decisions
+- actor validation
+- approval state
+- policy selection
+- enforcement mode
+- capability visibility
 
-- **Appendix A:** Non-normative policy format reference profile.
-- **Appendix B:** Optional static RBAC profile.
-- **Appendix C:** Optional structured audit profile.
-- **Appendix D:** Delegated governance modules.
-- **Appendix E:** Request context and decision response examples.
-- **Appendix F:** Reference implementation guidance and pseudocode.
-- **Appendix G:** Capability declaration example.
-- **Appendix H:** Error mapping example.
-- **Appendix I:** Relationship to gateways and authorization.
+The MCP Client may present identity, session, approval or request context, but the protected MCP Server MUST validate any security-relevant context using server-trusted evidence before relying on it.
 
-These profiles are included to make the proposal practical, but they are not required for minimal conformance unless the server advertises the corresponding support.
+If the server cannot validate the required context, the request MUST fail closed.
+
+## Goals
+
+This proposal aims to standardize a minimal MCP extension for:
+
+- advertising server-side policy enforcement support
+- enforcing policy before protected capability execution
+- optionally filtering capability discovery based on policy
+- supporting actor and approval constraints without trusting client claims
+- allowing local or external policy decision backends
+- defining safe fail-closed behavior
+- providing a common decision model for MCP implementations
 
 ## Non-goals
 
-This extension does not define a universal policy language.
+This proposal does not define:
 
-This extension does not require YAML, JSON, Rego, Cedar, OPA, PAM, LDAP, OAuth, a database, a local script, or any specific backend.
+- a policy language
+- a required RBAC or ABAC schema
+- a required audit log format
+- a required policy engine
+- a required identity provider
+- a replacement for OAuth, enterprise IdPs or MCP authorization
+- a replacement for gateway enforcement
+- a universal human/AI attestation mechanism
 
-This extension does not require static RBAC. Static RBAC is an optional profile for simple deployments only.
+## Relationship to existing MCP authorization
 
-This extension does not require structured audit. Structured audit is an optional profile for deployments that want policy decision records, denial records, approval records, or compliance evidence.
+MCP authorization governs whether a client can obtain and present credentials to access an MCP Server.
 
-This extension does not allow the MCP Client to supply, select, weaken, or override the server policy.
+This extension governs whether the MCP Server exposes or executes a specific MCP capability after authentication, identity and request context have been resolved.
 
-This extension does not replace MCP authorization, authentication, gateways, OAuth, enterprise IdP controls, or client-side safety mechanisms. It complements them by adding an enforcement point inside the MCP Server.
+These layers are complementary.
 
-This extension does not define recursive policy enforcement for a dedicated Policy / RBAC / Audit MCP Server. If a protected MCP Server delegates supporting functions to another service, that service is a trusted backend configured by the protected server operator.
+| Layer | Main question | Replaced by this extension? |
+|---|---|---|
+| MCP authorization / OAuth | Can a client access the MCP Server? | No |
+| Enterprise IdP policy | Is this principal authenticated and authorized at the identity layer? | No |
+| Gateway or proxy enforcement | Can traffic reach the server or method? | No |
+| MCP server-side policy enforcement | Can this capability be exposed or executed now? | Yes, this extension defines that contract |
+| Client confirmation UI | Did the user approve an action in the client? | No, but the server may require trusted approval evidence |
 
-## Terminology
+## Relationship to gateways
 
-**Policy Enforcement Point, PEP**  
-The logic inside the MCP Server that enforces policy before exposing or executing a capability.
+Gateways and proxies are valuable policy enforcement points, but they are not always present and should not be the only enforcement point.
 
-**Policy Decision Point, PDP**  
-The logic, local or external, that returns a policy decision to the Policy Enforcement Point.
+MCP Servers may run locally, over stdio, in embedded environments, in air-gapped networks, on the same host as the client or inside administrative workflows where the gateway is bypassed or unavailable.
 
-**External validation**  
-Any implementation-specific mechanism used by the MCP Server to obtain a decision beyond static in-memory policy. Examples include a local script, REST service, database query, PAM, LDAP, OPA, Cedar, in-memory callback, or dedicated Policy / RBAC service.
+For this reason, the protected MCP Server remains the final enforcement point for the capabilities it exposes.
 
-**Actor**  
-The entity on whose behalf a request is made. Examples include `human`, `ai_agent`, `supervised_ai`, `automation`, or implementation-specific actor types.
+A gateway may make a preliminary decision, but the MCP Server MUST remain able to deny discovery or execution of protected capabilities based on its own trusted policy context.
 
-**Discovery filtering**  
-Applying policy to discovery methods so the client only sees capabilities allowed by server-side policy for the current identity, actor, tenant, or context.
+## Extension declaration
 
-**Execution enforcement**  
-Applying policy immediately before a capability is executed or retrieved, even if it was previously visible during discovery.
+A server that supports this proposal declares the extension during MCP initialization using the standard MCP extension negotiation mechanism.
 
-**Static RBAC**  
-An optional policy-file-based profile that allows simple deployments to define allowed users and groups for specific MCP methods and capabilities without using an external authorization backend.
-
-**Structured audit**  
-An optional profile that allows the MCP Server to emit structured enforcement events for policy evaluation, discovery filtering, access denials, approvals, actor validation failures, static RBAC decisions, and external validation outcomes.
-
-## Zero Trust client posture
-
-This extension defines a Zero Trust approach to MCP Server governance.
-
-By default, the MCP Server does not trust the MCP Client to enforce authorization, actor identity, approval state, or capability visibility. The MCP Client may request, display, orchestrate, or participate in approval and elicitation flows, but it is not the authority for policy enforcement.
-
-Policy is evaluated inside the MCP Server before discovery or execution, ensuring that governance is enforced at the point where the protected capability is exposed or dispatched.
-
-Discovery filtering improves least-privilege exposure, but execution-time enforcement remains mandatory. A hidden capability must still be protected if a client attempts to invoke it directly.
-
-### Trusted local or embedded deployments
-
-Some deployments may intentionally relax the default Zero Trust assumption. For example, an MCP Server may be embedded in the same process as the host application, linked as a local library, compiled into a trusted system component, or executed inside a controlled same-machine wrapper where identity and actor validation have already been performed by the host.
-
-In these cases, the server may delegate specific validation steps to the trusted local host or wrapper. This behavior must be explicitly enabled by server-side policy and must never be assumed by default.
-
-The exception should be limited to trusted local, embedded, same-process, same-machine, or tightly controlled host environments. It must not be interpreted as permission to trust arbitrary remote MCP Clients.
-
-Example non-normative setting:
-
-```yaml
-default_policy:
-  _settings:
-    client_trust_mode: "zero_trust"   # "zero_trust" | "trusted_host"
-    delegate_actor_validation: false
-
-permissions:
-  tool.local_embedded_action:
-    tools/list: allow
-    tools/call: human_required
-    _settings:
-      client_trust_mode: "trusted_host"
-      delegate_actor_validation: true
-```
-
-## Capability declaration
-
-An MCP Server that supports this extension may declare a policy capability during the `initialize` response.
+Example:
 
 ```json
 {
   "capabilities": {
-    "policy": {
-      "version": "1.0",
-      "supportsDiscoveryFiltering": true,
-      "supportsActorBasedGovernance": true,
-      "supportsExternalValidation": true,
-      "supportsStaticRBAC": false,
-      "supportsAudit": false,
-      "supportsApprovalVia": ["task", "elicitation", "none"],
-      "policyInfo": {
-        "summary": "Server-side policy enforcement is enabled.",
-        "policyReference": "Contact the server operator or see deployment documentation.",
-        "auditReference": "Audit configuration is managed by the server operator."
+    "extensions": {
+      "io.modelcontextprotocol/server-policy-enforcement": {
+        "version": "1.0",
+        "supportsDiscoveryFiltering": true,
+        "supportsActorConstraints": true,
+        "supportsApprovalConstraints": true,
+        "supportsExternalDecision": true,
+        "supportsAuditEvents": false
       }
     }
   }
 }
 ```
 
-### Capability fields
+The exact extension identifier and metadata shape should be aligned with the MCP extension mechanism and maintainers' guidance.
 
-`version`  
-The version of this policy extension supported by the server.
+## Enforcement points
 
-`supportsDiscoveryFiltering`  
-Indicates that the server evaluates policy on discovery methods such as `tools/list`, `resources/list`, `prompts/list`, `tasks/list`, and future list methods.
+A conformant MCP Server MUST evaluate policy before executing protected capability methods.
 
-`supportsActorBasedGovernance`  
-Indicates that the server can evaluate actor-based decisions such as `human_required` and `supervised_ai_required` using server-trusted identity context, groups, claims, local users, or other server-controlled validation mechanisms.
+At minimum, this includes protected operations such as:
 
-`supportsExternalValidation`  
-Indicates that the server can invoke external validation logic as part of the policy decision flow. The mechanism is implementation-specific.
+- tool invocation
+- resource read or subscription
+- prompt access
+- task creation or execution, if supported
+- future MCP capability execution methods
 
-`supportsStaticRBAC`  
-Indicates that the server supports the optional static RBAC profile described in Appendix B.
+A conformant MCP Server MAY also evaluate policy during discovery methods, such as list operations for tools, resources or prompts.
 
-`supportsAudit`  
-Indicates that the server supports the optional structured audit profile described in Appendix C.
+Discovery filtering improves least privilege and reduces accidental exposure. However, discovery filtering alone is not sufficient.
 
-`supportsApprovalVia`  
-Lists approval mechanisms supported by the server when a decision is `require_approval`.
+If a capability is hidden during discovery, the server MUST still enforce policy if a client attempts to invoke or access it directly.
 
-Supported values:
+## Minimal conformance
 
-- `task`
-- `elicitation`
-- `none`
+A minimally conformant server:
 
-`policyInfo`  
-Optional human-readable, non-sensitive information about the server-side policy and audit configuration. This field is for operator and client UX only. It must not expose secrets, raw policy contents, private file paths, credentials, tokens, internal topology, or sensitive audit destinations.
+1. declares support for this extension using MCP extension negotiation;
+2. evaluates policy before executing protected capability methods;
+3. fails closed when policy cannot be evaluated;
+4. does not accept client-supplied policy as authoritative;
+5. does not allow the client to select enforcement mode;
+6. validates security-relevant actor, approval and session context using server-trusted evidence;
+7. returns a safe denial response that does not leak sensitive policy details.
 
-## Policy loading
-
-Policy loading is entirely controlled by the MCP Server implementation and is outside the scope of this extension.
-
-A server may load policy from:
-
-- a local file
-- command-line arguments
-- environment variables
-- a mounted configuration file
-- a container secret
-- a database
-- a URL
-- a trusted configuration service
-- an in-memory structure
-- compiled code
-- a policy engine
-- an enterprise identity or authorization service
-
-The MCP Client must not be responsible for loading or supplying the policy.
-
-A server that implements this extension should load and initialize its policy before it responds to `initialize`, or before it exposes protected capabilities. If policy cannot be loaded and the server is configured for fail-closed behavior, the server should deny protected methods rather than start in an unintended permissive state.
-
-A server may expose a non-sensitive policy reference in its capability declaration, such as a documentation link, support contact, or generic operator-facing message. The server should not expose raw policy file paths, raw policy contents, local audit file paths, bearer tokens, webhook URLs with secrets, internal hostnames, or private infrastructure details to arbitrary clients.
-
-## Policy evaluation points
-
-A compliant implementation must evaluate policy before any protected MCP capability is exposed or executed.
-
-The following method families should be considered protected evaluation points:
-
-- `tools/list`
-- `tools/call`
-- `resources/list`
-- `resources/read`
-- `prompts/list`
-- `prompts/get`
-- `tasks/*`
-- any future MCP method or extension method exposed by the server
-
-Policy should be evaluated at both discovery and execution time.
-
-Discovery filtering reduces exposure and improves user experience. Execution enforcement is still required because discovery filtering alone is not authorization. A client may call a hidden method directly, use stale discovery results, or bypass normal UI behavior.
+Discovery filtering, audit events, delegated policy decision services and approval workflow integration are optional profiles.
 
 ## Decision model
 
-The policy decision model defines the result returned by policy evaluation or external validation.
+Policy evaluation SHOULD produce one of the following decisions:
 
-### Required decision values
+- `allow`
+- `deny`
+- `require_approval`
 
-`allow`  
-The request is allowed to proceed.
+The server MAY internally support additional states, such as `indeterminate`, `not_applicable` or `error`, but these MUST be mapped to `deny` or another fail-closed result before execution.
 
-`deny`  
-The request must be rejected.
+Actor requirements are not decision values. They are constraints that must be satisfied before a final decision is produced.
 
-`require_approval`  
-The request requires approval before it can proceed. The approval mechanism is controlled by the server policy and server capabilities.
-
-`human_required`  
-The request is allowed only when the server can validate that the actor satisfies the server-trusted human actor classification.
-
-`supervised_ai_required`  
-The request is allowed only when the server can validate that the actor satisfies the server-trusted human or supervised-AI actor classification.
-
-### Optional decision fields
-
-A decision response may include:
-
-`reason`  
-A human-readable explanation suitable for logging, user feedback, operational audit, or client display.
-
-`reason_code`  
-A machine-readable identifier for the reason.
-
-`metadata`  
-Optional structured information, such as approval identifiers, remediation links, policy version, trace identifiers, or workflow references.
-
-Implementations must ignore unknown fields in decision responses unless explicitly configured otherwise.
-
-## Actor-based governance
-
-Actor-based governance allows a policy to distinguish between requests made by different actor types.
-
-Example actor types include:
-
-- `human`
-- `ai_agent`
-- `supervised_ai`
-- `automation`
-- implementation-specific actor types
-
-Actor validation must be performed by the MCP Server or by server-trusted validation logic. It may be based on LDAP groups, PAM, OAuth claims, JWT claims, local users, service accounts, enterprise identity groups, local configuration, or another trusted backend.
-
-### `human_required`
-
-When a policy decision is `human_required`, the server must allow the request only if it can validate that the actor satisfies the server-trusted human actor classification.
-
-If the server cannot validate this, it must fail closed.
-
-### `supervised_ai_required`
-
-When a policy decision is `supervised_ai_required`, the server must allow the request only if it can validate that the actor satisfies the server-trusted human or supervised-AI actor classification.
-
-If the server cannot validate this, it must fail closed.
-
-### Failure to validate actor type
-
-If actor validation is required and the server cannot reliably validate the actor type, the server must deny the request.
-
-Recommended decision response:
-
-```json
-{
-  "decision": "deny",
-  "reason": "Human-in-the-loop or supervised actor validation is required, but the server cannot validate actor type from trusted identity context.",
-  "reason_code": "ERR_CANNOT_VALIDATE_ACTOR"
-}
-```
-
-## Approval handling
-
-The `require_approval` decision means the request must not proceed until an approval workflow grants permission.
-
-The approval mechanism is server-controlled. The policy may specify how approval should be handled.
-
-Supported values for approval handling are:
-
-`task`  
-The server uses MCP Tasks when supported. This is the preferred mechanism for long-running approval workflows, asynchronous approvals, and approvals that may take minutes, hours, or longer.
-
-`elicitation`  
-The server uses MCP elicitation when supported. This is suitable for short, interactive approval flows within an active session.
-
-`none`  
-The server does not support an approval mechanism for this policy path. The server must treat `require_approval` as `deny` and return a clear reason.
-
-Recommended response when approval is required but unsupported:
-
-```json
-{
-  "decision": "deny",
-  "reason": "Approval is required by policy, but this server does not support an approval mechanism for this capability.",
-  "reason_code": "ERR_APPROVAL_NOT_SUPPORTED"
-}
-```
-
-When approval is implemented, the server should bind approval to the original request using a stable request hash or equivalent mechanism that includes method, capability name, parameters, identity context, and relevant metadata. The server must not allow approval for one request to be replayed for a different operation.
-
-## External validation contract
-
-External validation is the mechanism through which the MCP Server may delegate fine-grained authorization, RBAC, ABAC, audit enrichment, approval decisioning, actor validation, or custom enterprise governance logic.
-
-The extension defines the contract, not the backend.
-
-When external validation is enabled, the server passes a request context to validation logic and receives a decision response.
-
-The external validation mechanism may be:
-
-- a local script
-- a REST service
-- an in-memory function
-- a WebAssembly module
-- a policy engine
-- a PAM check
-- an LDAP lookup
-- a database lookup
-- a local file mapping users to capabilities
-- a dedicated authorization service
-- a dedicated Policy / RBAC MCP Server used as an internal backend
-
-The specific invocation mechanism is implementation-specific and configured by the MCP Server operator.
-
-The server should pass resolved identity attributes, not passwords, OAuth tokens, session secrets, private keys, or raw credentials.
-
-## Fail-closed behavior
-
-A server implementing this extension should use fail-closed behavior for policy errors.
-
-Recommended behavior:
-
-- policy load failure: deny protected methods or refuse startup, depending on deployment mode
-- invalid policy syntax: deny or refuse startup
-- unknown method: deny by default unless explicitly configured otherwise
-- invalid decision: deny
-- external validation timeout: deny
-- external validation error: deny
-- actor validation failure: deny
-- approval required but unsupported: deny
-
-Recommended reason codes:
-
-```text
-ERR_POLICY_LOAD_FAILED
-ERR_INVALID_POLICY
-ERR_UNKNOWN_METHOD
-ERR_INVALID_POLICY_DECISION
-ERR_EXTERNAL_VALIDATION_TIMEOUT
-ERR_EXTERNAL_VALIDATION_ERROR
-ERR_CANNOT_VALIDATE_ACTOR
-ERR_APPROVAL_NOT_SUPPORTED
-ERR_POLICY_VIOLATION
-```
-
-## Security considerations
-
-### Zero trust in the client
-
-The MCP Client must not be trusted to enforce server policy.
-
-The client may display policy-related information, request approval, participate in elicitation, or show user feedback, but the server remains the authority for deciding whether a protected action is exposed or executed.
-
-### Trusted host mode is an exception
-
-A trusted host mode, if implemented, is an explicit exception for local, embedded, same-machine, same-process, or tightly controlled host environments. It must not be treated as the default, and it must not be used to trust arbitrary remote clients.
-
-### Discovery filtering is not authorization by itself
-
-Filtering `tools/list`, `resources/list`, or `prompts/list` reduces exposure and improves UX. It must not replace enforcement on `tools/call`, `resources/read`, `prompts/get`, `tasks/*`, or future execution methods.
-
-### Policy and audit metadata disclosure
-
-If the server advertises friendly policy or audit information through `policyInfo`, the information must be non-sensitive.
-
-Safe examples include:
-
-- “Server-side policy enforcement is enabled.”
-- “Policy is managed by the platform team.”
-- “Audit is enabled.”
-- “See internal policy documentation.”
-
-Unsafe examples include:
-
-- raw policy file paths on the host
-- raw audit file paths when they reveal sensitive deployment details
-- secret-bearing URLs
-- bearer tokens or environment variable values
-- full policy contents
-- internal topology or private hostnames
-- identity backend implementation details that would aid an attacker
-
-Servers may provide more detailed policy or audit references only to authenticated and authorized administrators, using implementation-specific mechanisms.
-
-### External validation must not receive credentials
-
-The server should pass resolved identity claims and context, not raw authentication credentials.
-
-### Timeouts and fail-safe deny
-
-External validation must have a timeout. If validation fails, times out, crashes, or returns invalid data, the secure default is deny.
-
-### Least privilege and sandboxing
-
-When external validation logic runs as a separate process, it should run with minimal privileges, a scrubbed environment, restricted filesystem access, and no unnecessary secrets.
-
-Implementations may use OS-level sandboxing such as SELinux, AppArmor, seccomp, Landlock, containers, restricted users, or equivalent platform controls.
-
-## Backward compatibility
-
-This extension is optional.
-
-Servers that do not declare the policy capability continue to behave as before.
-
-Clients that do not understand the policy capability can still interact with the server using normal MCP methods.
-
-Policy-aware clients may use the capability declaration to display better UX, such as showing that a server performs discovery filtering or supports approval workflows.
-
-## Open questions
-
-1. Should the capability name be `policy`, `authorizationPolicy`, `serverPolicy`, or a namespaced extension identifier?
-2. Should `supportsApprovalVia` be part of the capability declaration, or should approval support be inferred from existing Tasks and elicitation capabilities?
-3. Should `human_required` and `supervised_ai_required` remain policy decisions, or should they be represented as constraints that resolve to `allow`, `deny`, or `require_approval`?
-4. Should `policyInfo` be standardized as a minimal informational object, or left fully implementation-specific?
-5. Should the non-normative YAML reference profile remain in this SEP, move to a separate implementation guide, or be removed from the SEP entirely?
-6. Should `_rbac` remain an optional reference profile, become a separately versioned profile in a future version of this specification, or become a separate extension?
-7. Should `_audit` remain an optional reference profile, become a separately versioned profile in a future version of this specification, or become a separate extension?
-8. Should delegated governance modules remain non-normative implementation patterns, or should one or more become separately versioned extension profiles?
-9. Should delegated Audit MCP Server behavior define a standard `audit.record_event` tool contract, or remain implementation-specific?
-
----
-
-# Appendix A: Non-normative policy format reference profile
-
-This appendix is illustrative. It does not define a required policy language.
-
-Implementations are not required to use YAML or to support this exact syntax. The YAML profile is provided only as a simple reference model for local or small implementations.
-
-## Reference naming convention
-
-Capability entries use the format:
-
-```text
-<domain>.<name>
-```
-
-Examples:
-
-```text
-tool.delete_volume
-resource.server_metrics
-prompt.code_review
-task.approval_workflow
-skill.security_scan
-trigger.on_deployment
-```
-
-Method keys use full MCP method names:
-
-```text
-tools/list
-tools/call
-resources/list
-resources/read
-prompts/list
-prompts/get
-tasks/list
-tasks/result
-tasks/cancel
-```
-
-Future methods and extensions can use the same format.
-
-## Reference fallback behavior
-
-For this non-normative profile, policy evaluation uses this order:
-
-1. `permissions.<capability>.<method>`
-2. `default_policy.<method>`
-3. `default_policy._other`
-4. hard-coded server fail-closed default, recommended `deny`
-
-The special key `_other` is the final catch-all for unknown, unsupported, or future methods.
-
-## Example YAML policy
-
-```yaml
-valid_methods:
-  - tools/list
-  - tools/call
-  - resources/list
-  - resources/read
-  - prompts/list
-  - prompts/get
-  - tasks/list
-  - tasks/result
-  - tasks/cancel
-
-valid_decisions:
-  - allow
-  - deny
-  - require_approval
-  - human_required
-  - supervised_ai_required
-
-default_policy:
-  tools/list: deny
-  tools/call: deny
-  resources/list: deny
-  resources/read: deny
-  prompts/list: deny
-  prompts/get: deny
-  tasks/list: deny
-  tasks/result: allow
-  tasks/cancel: require_approval
-  _other: deny
-
-  _settings:
-    timeout_ms: 500
-    use_external_validation: false
-    actor_requirement_non_match_decision: deny
-    require_approval_via: "task"
-    client_trust_mode: "zero_trust"
-    delegate_actor_validation: false
-
-permissions:
-  tool.delete_volume:
-    tools/list: allow
-    tools/call: human_required
-    _settings:
-      require_approval_via: "none"
-
-  tool.restart_service:
-    tools/list: allow
-    tools/call: supervised_ai_required
-    _settings:
-      actor_requirement_non_match_decision: require_approval
-      require_approval_via: "elicitation"
-
-  resource.server_metrics:
-    resources/list: allow
-    resources/read: allow
-
-  prompt.code_review:
-    prompts/list: allow
-    prompts/get: allow
-```
-
----
-
-# Appendix B: Optional static RBAC profile
-
-Static RBAC is fully optional.
-
-The core extension does not require a static RBAC syntax. The `_rbac` profile is included as an illustrative reference model for simple implementations.
-
-Static RBAC is included as an optional profile because simple and local MCP Servers may need a lightweight way to express user and group restrictions without deploying an external authorization backend. Static RBAC is not required for minimal conformance.
-
-If the community prefers, the `_rbac` profile may be refined, versioned, or split into a future version of this specification or into a separate extension. The core enforcement contract should remain independent of any specific RBAC model.
-
-## Static RBAC structure
-
-The key is named `_rbac`, not `rbac`, to avoid collisions with future MCP methods, capabilities, or extension keys.
-
-Example:
-
-```yaml
-permissions:
-  tool.delete_volume:
-    tools/list: allow
-    tools/call: human_required
-
-    _rbac:
-      tools/list:
-        allowed_groups:
-          - storage-viewers
-          - storage-admins
-
-      tools/call:
-        allowed_groups:
-          - storage-admins
-        allowed_users:
-          - root
-          - alice
-```
-
-## Static RBAC evaluation order
-
-If the server supports `_rbac`, the recommended evaluation order is:
-
-1. Resolve method decision.
-2. Resolve static RBAC for the same method:
-   - `permissions.<capability>._rbac.<method>`
-   - `default_policy._rbac.<method>`
-3. If `_rbac` is defined for the method, authorize only if:
-   - `identity_context.principal` matches one of `allowed_users`, or
-   - at least one value in `identity_context.groups` matches one of `allowed_groups`.
-4. If no `_rbac` rule is defined for the method, no static RBAC restriction is applied by the policy file.
-
-If an `_rbac` rule exists but identity context is missing or cannot be validated, the server should deny by default.
-
-Recommended reason codes:
-
-```text
-ERR_STATIC_RBAC_DENY
-ERR_CANNOT_VALIDATE_RBAC_CONTEXT
-```
-
----
-
-# Appendix C: Optional structured audit profile
-
-Structured audit is fully optional. The core requirement of this extension is server-side policy enforcement.
-
-Structured audit is included as an optional profile because policy enforcement decisions often need to produce governance evidence. Audit is not required for minimal conformance.
-
-If the community prefers, audit sinks and transport-specific audit behavior may be split into a future version of this specification or into a separate extension. However, this enforcement extension should still define a minimal structured enforcement event so audit implementations can record decisions without relying only on human-readable error messages.
-
-## Minimal structured enforcement event
-
-Audit should not depend only on client-visible error strings. The server may return a short, safe error to the MCP Client while internally producing a richer structured enforcement event for audit purposes.
-
-The structured enforcement event should contain enough context to support governance evidence while avoiding unnecessary sensitive data.
-
-Recommended event fields:
-
-```json
-{
-  "timestamp": "2026-04-28T15:30:00Z",
-  "event": "access_denied",
-  "method": "tools/call",
-  "capability": "tool.delete_volume",
-  "principal": "alice@example.com",
-  "actor_type": "human",
-  "decision": "deny",
-  "reason_code": "ERR_STATIC_RBAC_DENY",
-  "request_hash": "sha256:abc123",
-  "policy_version": "v1.0"
-}
-```
-
-Audit events may contain more detail than client-facing errors, but they must avoid secrets, credentials, sensitive parameters, raw tokens, private keys, and unnecessary payload data.
-
-## Illustrative audit modes
-
-`file`  
-The server writes structured audit events to a local file. This is useful for local testing and small deployments.
-
-`url`  
-The server sends structured audit events to an HTTP endpoint. This is useful for test collectors, webhooks, simple REST audit services, or integration testing.
-
-`delegated_mcp`  
-The server sends structured audit events to a trusted Audit / Logging MCP Server.
-
-`external`  
-The server uses an implementation-specific audit backend, such as syslog, journald, OpenTelemetry, SIEM integration, database logging, or a vendor-specific audit service.
-
-## Illustrative audit configuration
-
-```yaml
-default_policy:
-  _audit:
-    enabled: true
-    mode: "file"                    # "file" | "url" | "delegated_mcp" | "external"
-    fail_mode: "best_effort"        # "best_effort" | "fail_closed"
-    events:
-      - policy_decision
-      - access_denied
-      - approval_required
-      - actor_validation_failed
-      - static_rbac_denied
-      - external_validation_error
-    include:
-      - method
-      - capability
-      - principal
-      - actor_type
-      - decision
-      - reason_code
-      - request_hash
-      - timestamp
-    redact:
-      - parameters
-      - credentials
-      - secrets
-    file:
-      path: "./mcp-policy-audit.jsonl"
-      format: "jsonl"
-```
-
-The recommended default audit fail mode is `best_effort`. For high-risk or regulated operations, `fail_closed` may be configured explicitly.
-
----
-
-# Appendix D: Delegated governance modules
-
-This extension defines the enforcement contract inside the protected MCP Server. It does not require policy, RBAC, or audit logic to be implemented directly inside the server binary.
-
-Implementations may delegate supporting governance functions to separate modules. These modules are implementation-specific and may be embedded libraries, local processes, sidecars, REST services, databases, SaaS services, or dedicated MCP Servers.
-
-The protected MCP Server remains the Policy Enforcement Point in all cases.
-
-## Policy Provider module
-
-A Policy Provider module provides policy material to the MCP Server. It may return a policy bundle, effective policy view, version metadata, or policy references. It does not necessarily evaluate each request.
-
-Examples include:
-
-- local YAML or JSON loader
-- Git-backed policy repository
-- REST configuration service
-- Cedar or Rego bundle provider
-- database-backed policy store
-- dedicated Policy Provider MCP Server
-
-If policy retrieval fails, the enforcing server should use a valid cached policy or fail closed according to its server-side configuration.
-
-## Policy Decision / RBAC module
-
-A Policy Decision or RBAC module evaluates a specific request and returns a decision such as `allow`, `deny`, `require_approval`, `human_required`, or `supervised_ai_required`.
-
-Examples include:
-
-- LDAP or PAM check
-- local user/group map
-- OPA or Cedar policy engine
-- REST authorization service
-- database-backed authorization rules
-- dedicated Policy / RBAC MCP Server
-
-If the decision module is unavailable or returns an invalid response, the enforcing server should fail closed.
-
-## Audit module
-
-An Audit module records structured events emitted by the MCP Server.
-
-Examples include:
-
-- local JSONL file
-- syslog or journald
-- OpenTelemetry
-- SIEM endpoint
-- REST audit collector
-- dedicated Audit / Logging MCP Server
-
-If the audit module is unavailable, the server should follow the configured audit fail mode: `best_effort` by default, or `fail_closed` for high-risk or regulated operations.
-
-## Trust model for delegated modules
-
-These modules are not trusted because they are MCP Clients or MCP Servers. They are trusted only because the protected MCP Server operator configured them as trusted local or backend services.
-
-A delegated module should not weaken the Zero Trust posture toward arbitrary MCP Clients.
-
-Illustrative architecture:
-
-```text
-LLM / MCP Client
-        |
-        v
-Protected Zero-Trust MCP Server
-        |
-        | optional delegated governance calls
-        v
-Policy Provider / RBAC / Audit module
-        |
-        v
-LDAP / PAM / database / Git / SIEM / OpenTelemetry / enterprise backend
-```
-
----
-
-# Appendix E: Request and decision examples
-
-## External validation request context
-
-```json
-{
-  "mcp_context": {
-    "method": "tools/call",
-    "name": "tool.delete_volume",
-    "parameters": {
-      "volume_id": "vol-12345",
-      "region": "eu-west"
-    },
-    "request_hash": "sha256:example"
-  },
-  "identity_context": {
-    "principal": "alice@example.com",
-    "actor_type": "human",
-    "groups": ["storage-admin", "humans"],
-    "roles": ["administrator"],
-    "auth_source": "LDAP",
-    "is_impersonated": false
-  },
-  "metadata": {
-    "client_id": "internal-mcp-host-01",
-    "source_ip": "10.0.5.42",
-    "timestamp": "2026-04-28T15:30:00Z",
-    "tenant_id": "prod"
-  }
-}
-```
-
-## Decision response examples
-
-### Allow
-
-```json
-{
-  "decision": "allow",
-  "reason": "User belongs to the storage-admin group.",
-  "reason_code": "RBAC_ALLOW"
-}
-```
-
-### Deny
-
-```json
-{
-  "decision": "deny",
-  "reason": "User does not belong to the storage-admin group required for this operation.",
-  "reason_code": "RBAC_DENY"
-}
-```
-
-### Require approval
+For example:
 
 ```json
 {
   "decision": "require_approval",
-  "reason": "Deleting a volume requires human approval.",
-  "reason_code": "APPROVAL_REQUIRED",
-  "metadata": {
-    "approval_scope": "storage-admin",
-    "request_hash": "sha256:example"
-  }
+  "constraints": {
+    "actor_required": "human",
+    "approval_required": true,
+    "approval_via": "elicitation"
+  },
+  "reason_code": "HUMAN_APPROVAL_REQUIRED"
 }
 ```
 
-### Cannot validate actor
+If the server cannot validate that the actor requirement has been satisfied, the decision MUST be treated as `deny`.
+
+## Actor constraints
+
+Policy may require that a capability be invoked only by a specific class of actor.
+
+Example actor constraints include:
+
+- `human`
+- `supervised_ai`
+- `automation`
+- `service_account`
+
+This extension does not standardize actor attestation.
+
+The MCP Server MUST determine actor state using server-trusted identity and session context. The client may present actor information, but client-supplied actor claims MUST NOT be trusted by default.
+
+Trusted actor evidence may come from implementation-specific sources such as:
+
+- authenticated identity claims
+- enterprise IdP attributes
+- token-bound client identity
+- local operating system identity
+- PAM or host session context
+- mTLS identity
+- server-side session state
+- a trusted approval service
+- a trusted policy decision service
+
+If no trusted evidence is available, actor-constrained requests MUST fail closed.
+
+## Approval constraints
+
+Policy may require approval before a protected capability is executed.
+
+Approval requirements are constraints, not standalone authorization decisions.
+
+Example:
 
 ```json
 {
-  "decision": "deny",
-  "reason": "Human-in-the-loop or supervised actor validation is required, but the server cannot validate actor type from trusted identity context.",
-  "reason_code": "ERR_CANNOT_VALIDATE_ACTOR"
+  "decision": "require_approval",
+  "constraints": {
+    "approval_required": true,
+    "approval_via": "task"
+  },
+  "reason_code": "APPROVAL_REQUIRED"
 }
 ```
 
----
+The server MUST NOT treat a client assertion of approval as authoritative unless it can validate the approval using server-trusted evidence.
 
-# Appendix F: Non-normative reference implementation guidance
+Approval evidence may be implementation-specific and may include:
 
-A minimal implementation may:
+- a server-side approval record
+- a signed approval token
+- a trusted task approval state
+- a trusted elicitation result
+- an enterprise change-management record
 
-1. Load policy at server startup.
-2. Store policy in memory.
-3. Evaluate the requested method and capability.
-4. Resolve actor-based decisions using trusted identity context.
-5. Invoke external validation only when configured.
-6. Apply timeout and fail-safe deny.
-7. Resolve approval handling when the final decision is `require_approval`.
-8. Emit an audit event if supported and enabled.
-9. Execute the MCP capability only when the final decision is `allow`.
+If approval is required but cannot be validated, the server MUST deny execution or return a safe `require_approval` response.
 
-## Illustrative pseudocode
+## External policy decision services
 
-```python
-def evaluate_policy(request, policy):
-    method = request.mcp_context.method
-    name = request.mcp_context.name
+A server MAY delegate policy evaluation to an external trusted policy service.
 
-    decision = evaluate_static_policy_if_present(method, name, policy)
+In this model:
 
-    if static_rbac_is_configured(policy, method, name):
-        rbac_result = evaluate_static_rbac(request, policy, method, name)
-        if rbac_result.denied:
-            return deny("ERR_STATIC_RBAC_DENY")
-        if rbac_result.cannot_validate:
-            return deny("ERR_CANNOT_VALIDATE_RBAC_CONTEXT")
+- the MCP Server remains the Policy Enforcement Point;
+- the external service acts as a Policy Decision Point;
+- the MCP Server sends request context to the policy service;
+- the policy service returns a decision and constraints;
+- the MCP Server enforces the result locally.
 
-    decision = resolve_actor_based_decision(decision, request.identity_context)
+The external policy service may use any backend, including RBAC, ABAC, Rego/OPA, Cedar, database-backed policy, enterprise IdP policy, local files or custom logic.
 
-    if external_validation_is_enabled(policy, method, name):
-        decision = call_external_validation(request, decision)
+If the external policy service is unavailable, returns an invalid decision, times out or produces an unsupported result, the MCP Server MUST fail closed.
 
-    if decision == "require_approval":
-        return handle_approval(request, policy)
+## Fail-closed behavior
 
-    return decision
-```
+A conformant server MUST deny or safely block execution when:
 
----
+- policy cannot be loaded
+- policy cannot be evaluated
+- an external policy service is unavailable
+- a policy decision is malformed
+- actor constraints cannot be validated
+- approval constraints cannot be validated
+- the requested method is unknown or unsupported
+- the capability is protected but no applicable policy exists
+- the policy backend returns an error or indeterminate result
 
-# Appendix G: Example capability declaration
+The server SHOULD avoid returning sensitive policy internals in error messages.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "protocolVersion": "2025-11-25",
-    "capabilities": {
-      "tools": {
-        "listChanged": true
-      },
-      "resources": {
-        "listChanged": true,
-        "subscribe": true
-      },
-      "prompts": {
-        "listChanged": true
-      },
-      "tasks": {},
-      "policy": {
-        "version": "1.0",
-        "supportsDiscoveryFiltering": true,
-        "supportsActorBasedGovernance": true,
-        "supportsExternalValidation": true,
-        "supportsStaticRBAC": true,
-        "supportsAudit": true,
-        "supportsApprovalVia": ["task", "elicitation", "none"],
-        "policyInfo": {
-          "summary": "Server-side policy enforcement is enabled.",
-          "policyReference": "Contact the server operator or see deployment documentation.",
-          "auditReference": "Structured audit is enabled and managed by the server operator."
-        }
-      }
-    },
-    "serverInfo": {
-      "name": "example-policy-aware-mcp-server",
-      "title": "Example Policy-Aware MCP Server",
-      "version": "1.0.0"
-    }
-  }
-}
-```
+## Error and response guidance
 
----
+A denied request SHOULD return a safe error or refusal response.
 
-# Appendix H: Example denied MCP error mapping
+The response MAY include a stable reason code suitable for client behavior or audit correlation.
 
-The policy decision is internal to the server. When denying an MCP request, the server should return an MCP-compatible error response or tool result according to the relevant MCP method semantics.
+Example reason codes:
 
-Example JSON-RPC error shape:
+- `POLICY_DENIED`
+- `POLICY_UNAVAILABLE`
+- `POLICY_INDETERMINATE`
+- `ACTOR_VALIDATION_FAILED`
+- `APPROVAL_REQUIRED`
+- `APPROVAL_VALIDATION_FAILED`
+- `CAPABILITY_NOT_VISIBLE`
+- `CAPABILITY_NOT_ALLOWED`
+
+Human-readable messages SHOULD be generic unless the server is configured to expose more detail.
+
+Example:
 
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 42,
   "error": {
-    "code": -32001,
-    "message": "Request denied by server-side policy.",
-    "data": {
-      "reason_code": "RBAC_DENY",
-      "reason": "User does not belong to the storage-admin group required for this operation."
+    "code": "POLICY_DENIED",
+    "message": "The server policy does not allow this operation."
+  }
+}
+```
+
+## Optional profiles
+
+The following profiles are non-normative and may be developed separately.
+
+### Discovery filtering profile
+
+Defines how a server filters list responses for tools, resources, prompts or future capabilities based on policy.
+
+Discovery filtering is useful for least privilege, but execution enforcement remains mandatory.
+
+### Actor constraint profile
+
+Defines common actor constraint names and expected validation semantics.
+
+This profile may include actor types such as `human`, `supervised_ai`, `automation` and `service_account`.
+
+### Approval profile
+
+Defines how `require_approval` decisions interact with MCP mechanisms such as elicitation, tasks or future approval primitives.
+
+This profile should not require a single approval transport in the core proposal.
+
+### External decision profile
+
+Defines a reference request/response shape for delegating policy decisions to an external Policy Decision Point.
+
+This profile should remain backend-neutral.
+
+### Static RBAC reference profile
+
+Defines a simple local RBAC mapping for small deployments, local MCP Servers or reference implementations.
+
+This profile is useful for examples, but should not be part of the normative core.
+
+### Structured audit profile
+
+Defines optional audit events for policy evaluation, discovery filtering and execution decisions.
+
+Audit is important for enterprise deployments, but may deserve a separate extension to avoid overloading the core policy proposal.
+
+## Example: protected tool invocation
+
+A client invokes a protected tool:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "restart_service",
+    "arguments": {
+      "service": "database"
     }
   }
 }
 ```
 
-For `tools/call`, an implementation may alternatively return a tool result with `isError: true` when that is more appropriate for the MCP method semantics.
+The server evaluates policy using trusted context:
 
----
-
-# Appendix I: Relationship to gateways and authorization
-
-This extension complements gateways and MCP authorization. It does not replace them.
-
-A gateway may authenticate traffic, apply perimeter controls, and enforce organization-wide policies before the request reaches the MCP Server. The MCP Server still enforces policy locally before exposing or executing protected capabilities.
-
-This creates layered governance:
-
-```text
-Client / Host / Agent
-        |
-        v
-Gateway or enterprise access layer
-        |
-        v
-MCP Server-side Policy Enforcement Point
-        |
-        v
-Protected capability or backend system
+```json
+{
+  "subject": {
+    "principal": "user:alice@example.com",
+    "actor_type": "human",
+    "groups": ["sre"]
+  },
+  "capability": {
+    "type": "tool",
+    "name": "restart_service"
+  },
+  "action": "execute",
+  "arguments": {
+    "service": "database"
+  },
+  "environment": {
+    "tenant": "production",
+    "risk": "high"
+  }
+}
 ```
 
-The architectural contribution of this extension is that policy is enforced where the MCP capability is actually exposed or dispatched.
+The policy decision requires approval:
+
+```json
+{
+  "decision": "require_approval",
+  "constraints": {
+    "actor_required": "human",
+    "approval_required": true,
+    "approval_via": "task"
+  },
+  "reason_code": "PRODUCTION_CHANGE_REQUIRES_APPROVAL"
+}
+```
+
+The server does not execute the tool until trusted approval evidence is available.
+
+## Security considerations
+
+This extension is designed to prevent MCP Clients from becoming the sole authority for policy enforcement.
+
+Important security properties:
+
+- the protected MCP Server remains the final enforcement point;
+- discovery filtering is never a substitute for execution enforcement;
+- actor and approval claims from the client are not trusted by default;
+- unsupported, malformed or unavailable policy decisions fail closed;
+- external policy services do not move enforcement out of the protected server;
+- denial responses should avoid leaking sensitive policy details.
+
+## Why this is needed
+
+Without a server-side enforcement contract, MCP deployments may rely on inconsistent combinations of client confirmation, gateway controls, OAuth scopes, local configuration and implementation-specific access checks.
+
+That may be sufficient for simple demos, but it is weak for enterprise and operational environments where MCP capabilities can affect infrastructure, data, services, compliance posture or production availability.
+
+This proposal provides a minimal common contract for MCP Servers to say:
+
+> I enforce policy before exposing or executing protected capabilities, and I do not trust the client as the policy authority.
+
+## Open questions
+
+1. Should the core decision model include only `allow`, `deny` and `require_approval`, or should `indeterminate` be exposed to clients?
+2. Should discovery filtering be required for conformant servers or remain optional?
+3. Should approval integration be part of the core extension or a separate profile?
+4. Should structured audit events be included in this SEP or split into a separate audit extension?
+5. What extension identifier should be used for a formal MCP SEP?
+6. Should actor constraint names be standardized in v1 or left to implementation profiles?
+
+## Recommended SEP framing
+
+The proposal should not be framed as:
+
+> MCP needs a new policy language.
+
+It should be framed as:
+
+> MCP needs a minimal server-side enforcement contract so servers can consistently apply policy at discovery and execution time without trusting the client as the policy authority.
+
+## Recommended title
+
+**Server-side policy enforcement for MCP capabilities**
+
+Alternative:
+
+**Capability-level server-side policy enforcement for MCP**
+
+## Recommended one-line pitch
+
+This extension defines a minimal, backend-neutral contract for MCP Servers to enforce policy at capability discovery and execution time, while preserving the server as the final Policy Enforcement Point.
 
