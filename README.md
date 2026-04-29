@@ -69,3 +69,7 @@ Early draft for community feedback.
 
 This is not an official MCP SEP.
 
+## AI usage disclosure
+
+Generative AI was used as an editorial and technical sparring partner while developing this draft. The core idea, proposal direction and final editorial judgment are mine.
+
