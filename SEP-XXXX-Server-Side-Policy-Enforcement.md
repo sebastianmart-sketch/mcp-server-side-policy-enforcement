@@ -8,7 +8,7 @@ Draft proposal for early community review.
 
 This proposal defines a minimal, backend-neutral extension for server-side policy enforcement in MCP.
 
-The extension allows an MCP Server to advertise that it evaluates policy before exposing or executing protected MCP capabilities, including tools, resources, prompts and future capability types. The protected MCP Server remains the Policy Enforcement Point (PEP), while policy evaluation may be local or delegated to an external trusted policy service.
+The extension allows an MCP Server to advertise that it evaluates policy before exposing or executing protected MCP capabilities, including tools, resources, prompts and future capability types. The protected MCP Server remains the Policy Enforcement Point, while policy evaluation may be local or delegated to an external trusted policy service.
 
 The proposal does not define a policy language, RBAC model, ABAC model, audit backend, identity provider or authorization protocol. It defines the enforcement contract that an MCP Server can implement regardless of the underlying policy system.
 
@@ -32,12 +32,12 @@ Server-side policy enforcement answers:
 
 An MCP Server that supports this extension MUST NOT trust the MCP Client by default as the authority for:
 
-- authorization decisions
-- actor validation
-- approval state
-- policy selection
-- enforcement mode
-- capability visibility
+- authorization decisions;
+- actor validation;
+- approval state;
+- policy selection;
+- enforcement mode;
+- capability visibility.
 
 The MCP Client may present identity, session, approval or request context, but the protected MCP Server MUST validate any security-relevant context using server-trusted evidence before relying on it.
 
@@ -47,26 +47,26 @@ If the server cannot validate the required context, the request MUST fail closed
 
 This proposal aims to standardize a minimal MCP extension for:
 
-- advertising server-side policy enforcement support
-- enforcing policy before protected capability execution
-- optionally filtering capability discovery based on policy
-- supporting actor and approval constraints without trusting client claims
-- allowing local or external policy decision backends
-- defining safe fail-closed behavior
-- providing a common decision model for MCP implementations
+- advertising server-side policy enforcement support;
+- enforcing policy before protected capability execution;
+- optionally filtering capability discovery based on policy;
+- supporting actor and approval constraints without trusting client claims;
+- allowing local or external policy decision backends;
+- defining safe fail-closed behavior;
+- providing a common decision model for MCP implementations.
 
 ## Non-goals
 
 This proposal does not define:
 
-- a policy language
-- a required RBAC or ABAC schema
-- a required audit log format
-- a required policy engine
-- a required identity provider
-- a replacement for OAuth, enterprise IdPs or MCP authorization
-- a replacement for gateway enforcement
-- a universal human/AI attestation mechanism
+- a policy language;
+- a required RBAC or ABAC schema;
+- a required audit log format;
+- a required policy engine;
+- a required identity provider;
+- a replacement for OAuth, enterprise IdPs or MCP authorization;
+- a replacement for gateway enforcement;
+- a universal human/AI attestation mechanism.
 
 ## Relationship to existing MCP authorization
 
@@ -119,17 +119,19 @@ Example:
 
 The exact extension identifier and metadata shape should be aligned with the MCP extension mechanism and maintainers' guidance.
 
+Earlier drafts or non-extension capabilities may appear directly under `capabilities`. This proposal is intended as an MCP extension and therefore uses the extension negotiation mechanism.
+
 ## Enforcement points
 
 A conformant MCP Server MUST evaluate policy before executing protected capability methods.
 
 At minimum, this includes protected operations such as:
 
-- tool invocation
-- resource read or subscription
-- prompt access
-- task creation or execution, if supported
-- future MCP capability execution methods
+- tool invocation;
+- resource read or subscription;
+- prompt access;
+- task creation or execution, if supported;
+- future MCP capability execution methods.
 
 A conformant MCP Server MAY also evaluate policy during discovery methods, such as list operations for tools, resources or prompts.
 
@@ -161,9 +163,9 @@ Policy evaluation SHOULD produce one of the following decisions:
 
 The server MAY internally support additional states, such as `indeterminate`, `not_applicable` or `error`, but these MUST be mapped to `deny` or another fail-closed result before execution.
 
-Actor requirements are not decision values. They are constraints that must be satisfied before a final decision is produced.
+Actor requirements and approval routing are not decision values. They are constraints that must be satisfied before a final decision is enforced.
 
-For example:
+A policy decision MAY include constraints such as:
 
 ```json
 {
@@ -171,13 +173,22 @@ For example:
   "constraints": {
     "actor_required": "human",
     "approval_required": true,
-    "approval_via": "elicitation"
+    "require_approval_via": "task"
   },
-  "reason_code": "HUMAN_APPROVAL_REQUIRED"
+  "reason_code": "PRODUCTION_CHANGE_REQUIRES_APPROVAL"
 }
 ```
 
-If the server cannot validate that the actor requirement has been satisfied, the decision MUST be treated as `deny`.
+The following constraint values are suggested for interoperability:
+
+```text
+actor_required: human | supervised_ai | automation | service_account
+require_approval_via: task | elicitation | none
+```
+
+`human_required` and `supervised_ai_required` MAY be represented by implementations as shorthand policy rules, but the interoperable decision result SHOULD express them as actor constraints, for example `actor_required: human` or `actor_required: supervised_ai`.
+
+If the server cannot validate that the required actor or approval constraint has been satisfied, the decision MUST be treated as `deny` or remain blocked as `require_approval` until trusted evidence is available.
 
 ## Actor constraints
 
@@ -196,15 +207,15 @@ The MCP Server MUST determine actor state using server-trusted identity and sess
 
 Trusted actor evidence may come from implementation-specific sources such as:
 
-- authenticated identity claims
-- enterprise IdP attributes
-- token-bound client identity
-- local operating system identity
-- PAM or host session context
-- mTLS identity
-- server-side session state
-- a trusted approval service
-- a trusted policy decision service
+- authenticated identity claims;
+- enterprise IdP attributes;
+- token-bound client identity;
+- local operating system identity;
+- PAM or host session context;
+- mTLS identity;
+- server-side session state;
+- a trusted approval service;
+- a trusted policy decision service.
 
 If no trusted evidence is available, actor-constrained requests MUST fail closed.
 
@@ -221,23 +232,50 @@ Example:
   "decision": "require_approval",
   "constraints": {
     "approval_required": true,
-    "approval_via": "task"
+    "require_approval_via": "task"
   },
   "reason_code": "APPROVAL_REQUIRED"
 }
 ```
 
+The suggested values for `require_approval_via` are:
+
+- `task`: approval should be mediated through a task or change workflow;
+- `elicitation`: approval should be mediated through an explicit elicitation step;
+- `none`: no additional approval channel is required by policy.
+
 The server MUST NOT treat a client assertion of approval as authoritative unless it can validate the approval using server-trusted evidence.
 
 Approval evidence may be implementation-specific and may include:
 
-- a server-side approval record
-- a signed approval token
-- a trusted task approval state
-- a trusted elicitation result
-- an enterprise change-management record
+- a server-side approval record;
+- a signed approval token;
+- a trusted task approval state;
+- a trusted elicitation result;
+- an enterprise change-management record.
 
 If approval is required but cannot be validated, the server MUST deny execution or return a safe `require_approval` response.
+
+## Default-deny fallback
+
+Policy implementations SHOULD provide an explicit default-deny fallback for unknown, future or unclassified MCP methods.
+
+Reference profiles MAY represent this fallback as `_other: deny`.
+
+This fallback is important because MCP may evolve with new methods or capability types. A server-side policy implementation should not accidentally allow an unknown future method simply because no explicit policy entry exists for it.
+
+Example non-normative method policy:
+
+```yaml
+_methods:
+  tools/list: filter
+  tools/call: evaluate
+  resources/list: filter
+  resources/read: evaluate
+  prompts/list: filter
+  prompts/get: evaluate
+  _other: deny
+```
 
 ## External policy decision services
 
@@ -255,19 +293,64 @@ The external policy service may use any backend, including RBAC, ABAC, Rego/OPA,
 
 If the external policy service is unavailable, returns an invalid decision, times out or produces an unsupported result, the MCP Server MUST fail closed.
 
+### Non-normative external decision request example
+
+```json
+{
+  "subject": {
+    "principal": "user:alice@example.com",
+    "actor_type": "human",
+    "groups": ["sre"],
+    "tenant": "example-corp"
+  },
+  "capability": {
+    "type": "tool",
+    "name": "restart_service"
+  },
+  "action": "execute",
+  "arguments": {
+    "service": "database"
+  },
+  "environment": {
+    "deployment": "production",
+    "risk": "high"
+  },
+  "approval": {
+    "present": false
+  }
+}
+```
+
+### Non-normative external decision response example
+
+```json
+{
+  "decision": "require_approval",
+  "constraints": {
+    "actor_required": "human",
+    "approval_required": true,
+    "require_approval_via": "task"
+  },
+  "reason_code": "PRODUCTION_CHANGE_REQUIRES_APPROVAL",
+  "safe_message": "This operation requires approval before execution."
+}
+```
+
+This example is illustrative only. Implementations may use different transport, schema, policy engines or validation backends.
+
 ## Fail-closed behavior
 
 A conformant server MUST deny or safely block execution when:
 
-- policy cannot be loaded
-- policy cannot be evaluated
-- an external policy service is unavailable
-- a policy decision is malformed
-- actor constraints cannot be validated
-- approval constraints cannot be validated
-- the requested method is unknown or unsupported
-- the capability is protected but no applicable policy exists
-- the policy backend returns an error or indeterminate result
+- policy cannot be loaded;
+- policy cannot be evaluated;
+- an external policy service is unavailable;
+- a policy decision is malformed;
+- actor constraints cannot be validated;
+- approval constraints cannot be validated;
+- the requested method is unknown or unsupported;
+- the capability is protected but no applicable policy exists;
+- the policy backend returns an error or indeterminate result.
 
 The server SHOULD avoid returning sensitive policy internals in error messages.
 
@@ -287,6 +370,7 @@ Example reason codes:
 - `APPROVAL_VALIDATION_FAILED`
 - `CAPABILITY_NOT_VISIBLE`
 - `CAPABILITY_NOT_ALLOWED`
+- `UNKNOWN_METHOD_DENIED`
 
 Human-readable messages SHOULD be generic unless the server is configured to expose more detail.
 
@@ -300,6 +384,62 @@ Example:
   }
 }
 ```
+
+## Non-normative YAML reference profile
+
+The following YAML example illustrates one possible static policy profile.
+
+This proposal does not require YAML, RBAC or this schema. The example is included only to clarify how the minimal enforcement contract could be implemented.
+
+```yaml
+version: 1
+
+_settings:
+  default_decision: deny
+  client_claims_authoritative: false
+  policy_error: deny
+  unknown_capability: deny
+
+_methods:
+  tools/list: filter
+  tools/call: evaluate
+  resources/list: filter
+  resources/read: evaluate
+  prompts/list: filter
+  prompts/get: evaluate
+  _other: deny
+
+roles:
+  sre:
+    description: Site reliability engineers with controlled operational access.
+    grants:
+      - capability: tool:read_logs
+        actions: [execute]
+        decision: allow
+
+      - capability: tool:restart_service
+        actions: [execute]
+        decision: require_approval
+        constraints:
+          actor_required: human
+          approval_required: true
+          require_approval_via: task
+
+  automation:
+    description: Automation service account with narrow permissions.
+    grants:
+      - capability: tool:collect_metrics
+        actions: [execute]
+        decision: allow
+        constraints:
+          actor_required: service_account
+
+      - capability: tool:restart_service
+        actions: [execute]
+        decision: deny
+```
+
+A fuller reference profile may be maintained outside the core SEP as implementation guidance.
 
 ## Optional profiles
 
@@ -389,7 +529,7 @@ The policy decision requires approval:
   "constraints": {
     "actor_required": "human",
     "approval_required": true,
-    "approval_via": "task"
+    "require_approval_via": "task"
   },
   "reason_code": "PRODUCTION_CHANGE_REQUIRES_APPROVAL"
 }
@@ -408,6 +548,7 @@ Important security properties:
 - actor and approval claims from the client are not trusted by default;
 - unsupported, malformed or unavailable policy decisions fail closed;
 - external policy services do not move enforcement out of the protected server;
+- unknown or future methods can be covered by an explicit default-deny fallback such as `_other: deny`;
 - denial responses should avoid leaking sensitive policy details.
 
 ## Why this is needed
@@ -428,6 +569,9 @@ This proposal provides a minimal common contract for MCP Servers to say:
 4. Should structured audit events be included in this SEP or split into a separate audit extension?
 5. What extension identifier should be used for a formal MCP SEP?
 6. Should actor constraint names be standardized in v1 or left to implementation profiles?
+7. Should `require_approval_via` values be standardized in the core extension or moved to the approval profile?
+8. Should a reference external decision contract be standardized, or should the core only require decision semantics?
+9. Should `_other: deny` be a required behavior or a strongly recommended reference-profile convention?
 
 ## Recommended SEP framing
 
