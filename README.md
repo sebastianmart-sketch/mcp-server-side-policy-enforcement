@@ -50,10 +50,10 @@ Both are needed.
 
 ## Repository contents
 
-- `SEP-XXXX-Server-Side-Policy-Enforcement.md` contains the minimal normative proposal.
-- `examples/` contains non-normative examples for policy files, policy decisions, protected tool calls and discovery filtering.
-- `profiles/` contains optional implementation profiles that may later become separate extensions or implementation guides.
-- `implementation-notes/` contains deployment guidance for local servers, delegated policy services and gateway/server enforcement boundaries.
+- [`SEP-XXXX-Server-Side-Policy-Enforcement.md`](./SEP-XXXX-Server-Side-Policy-Enforcement.md) contains the minimal normative proposal.
+- [`examples/`](./examples/) contains non-normative examples for policy files, policy decisions, protected tool calls and discovery filtering.
+- [`profiles/`](./profiles/) contains optional implementation profiles that may later become separate extensions or implementation guides.
+- [`implementation_notes/`](./implementation_notes/) contains deployment guidance for local servers, delegated policy services and gateway/server enforcement boundaries.
 
 ## Design principle
 
